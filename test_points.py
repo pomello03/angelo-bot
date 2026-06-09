@@ -1,7 +1,7 @@
 import unittest
 import struct
 import io
-from championship import calculate_points, rename_driver
+from championship import calculate_points, rename_driver, get_completed_races, upgrade_csv_headers
 from telemetry import RaceResult, DriverResult, TelemetryListener
 from import_parser import parse_exported_csv
 from config import get_driver_to_team
@@ -248,6 +248,153 @@ class TestAngeloBot(unittest.TestCase):
         finally:
             if os.path.exists(temp_csv):
                 os.remove(temp_csv)
+
+    TEST_CSV_CONTENT = (
+        '"Pos.","Pilota","Scuderia","Griglia","Soste","Migliore","Tempo","Pti.","tipo di pilota"\n'
+        '"1","Utente","Oracle Red Bull Racing","1","2","1:21,163","42:15,912","25","Utente"\n'
+        '"2","POMELLO","Mercedes-AMG F1 Team","2","1","1:21,358","+0,349","18","Utente"\n'
+        '"3","Charles LECLERC","Scuderia Ferrari HP","9","1","1:21,146","+4,318","15","IA"\n'
+        '"4","Oscar PIASTRI","McLaren","3","1","1:22,469","+4,926","12","IA"\n'
+        '"5","Carlos SAINZ","Atlassian Williams F1 Team","7","2","1:22,178","+5,162","10","IA"\n'
+        '"6","Andrea Kimi ANTONELLI","Mercedes-AMG F1 Team","5","1","1:22,231","+5,782","8","IA"\n'
+        '"7","Lando NORRIS","McLaren","4","1","1:22,065","+6,784","6","IA"\n'
+        '"8","Max VERSTAPPEN","Oracle Red Bull Racing","6","1","1:21,523","+7,255","4","IA"\n'
+        '"9","Arvid LINDBLAD","Visa Cash App Racing Bulls","12","1","1:22,826","+9,124","2","IA"\n'
+        '"10","Alexander ALBON","Atlassian Williams F1 Team","20","2","1:22,224","+9,439","1","IA"\n'
+        '"11","Pierre GASLY","Alpine","8","2","1:22,314","+10,352","0","IA"\n'
+        '"12","Liam LAWSON","Visa Cash App Racing Bulls","13","1","1:23,288","+11,620","0","IA"\n'
+        '"13","Esteban OCON","Haas","16","2","1:22,576","+11,822","0","IA"\n'
+        '"14","Nico HULKENBERG","Audi Revolut F1 Team","18","1","1:22,869","+12,180","0","IA"\n'
+        '"15","Fernando ALONSO","Aston Martin Aramco","15","2","1:22,236","+12,810","0","IA"\n'
+        '"16","Gabriel BORTOLETO","Audi Revolut F1 Team","19","1","1:22,925","+13,126","0","IA"\n'
+        '"17","Sergio PÉREZ","Cadillac Formula 1® Team","21","2","1:23,105","+15,300","0","IA"\n'
+        '"18","Oliver BEARMAN","Haas","17","2","1:23,099","+15,710","0","IA"\n'
+        '"19","Valtteri BOTTAS","Cadillac Formula 1® Team","22","2","1:23,481","+ 1 giro","0","IA"\n'
+        '"20","Utente","Scuderia Ferrari HP","11","4","1:19,451","+ 1 giro","0","Utente"\n'
+        '"21","Lance STROLL","Aston Martin Aramco","14","2","1:22,965","RIT","0","IA"\n'
+        '"22","Franco COLAPINTO","Alpine","10","2","1:23,325","RIT","0","IA"\n'
+        '\n'
+        '"Tempo","Giro","Pilota","Scuderia","Incidente","Penalità"\n'
+    )
+
+    def test_parse_real_csv_files(self):
+        # We need a driver_to_team mapping to resolve the two "Utente" players.
+        # One is in Oracle Red Bull Racing (Red Bull Racing)
+        # Another is in Scuderia Ferrari HP (Ferrari)
+        driver_to_team = {
+            "Angelo": "Red Bull Racing",
+            "Franco": "Ferrari",
+        }
+        
+        result, unresolved = parse_exported_csv(self.TEST_CSV_CONTENT, driver_to_team)
+        self.assertEqual(len(unresolved), 0)
+        self.assertIsNotNone(result)
+        
+        # Check that the Red Bull "Utente" is resolved to "Angelo"
+        d1 = next(d for d in result.drivers if d.position == 1)
+        self.assertEqual(d1.name, "Angelo")
+        self.assertEqual(d1.scuderia, "Red Bull Racing")
+        
+        # Check that the Ferrari "Utente" is resolved to "Franco"
+        d20 = next(d for d in result.drivers if d.position == 20)
+        self.assertEqual(d20.name, "Franco")
+        self.assertEqual(d20.scuderia, "Ferrari")
+        
+        # Check that "POMELLO" is preserved
+        dpomello = next(d for d in result.drivers if d.position == 2)
+        self.assertEqual(dpomello.name, "POMELLO")
+        self.assertEqual(dpomello.scuderia, "Mercedes")
+        
+        # Check game year detection (should be 26 because of Audi/Cadillac teams)
+        self.assertEqual(result.game_year, 26)
+
+    def test_completed_races_and_migration(self):
+        import os
+        import csv
+        temp_csv = "temp_test_completed_races.csv"
+        
+        # Ensure clean state
+        if os.path.exists(temp_csv):
+            os.remove(temp_csv)
+            
+        try:
+            # 1. Setup old CSV data (without nome_gara column)
+            old_headers = [
+                "data", "pilota", "scuderia", "posizione", "punti_base", "bonus_giro_veloce",
+                "punti_totali", "giri", "pit_stop", "miglior_giro", "stato",
+                "griglia_partenza", "tempo_penalita"
+            ]
+            rows = [
+                {"data": "2026-06-08 18:00:00", "pilota": "Charles Leclerc", "scuderia": "Ferrari", "posizione": "1", "punti_base": "25", "bonus_giro_veloce": "0", "punti_totali": "25", "giri": "50", "pit_stop": "1", "miglior_giro": "1:30.000", "stato": "Finito", "griglia_partenza": "1", "tempo_penalita": "0"},
+                {"data": "2026-06-09 18:00:00", "pilota": "Lewis Hamilton", "scuderia": "Ferrari", "posizione": "2", "punti_base": "18", "bonus_giro_veloce": "0", "punti_totali": "18", "giri": "50", "pit_stop": "1", "miglior_giro": "1:30.500", "stato": "Finito", "griglia_partenza": "2", "tempo_penalita": "0"},
+            ]
+            with open(temp_csv, mode='w', newline='', encoding='utf-8') as f:
+                writer = csv.DictWriter(f, fieldnames=old_headers)
+                writer.writeheader()
+                writer.writerows(rows)
+                
+            # 2. Trigger migration and get races
+            races = get_completed_races(temp_csv)
+            self.assertEqual(len(races), 2)
+            self.assertEqual(races[0], "Gara 2026-06-08")
+            self.assertEqual(races[1], "Gara 2026-06-09")
+            
+            # 3. Check CSV content schema is migrated
+            with open(temp_csv, mode='r', encoding='utf-8') as f:
+                reader = csv.DictReader(f)
+                headers = reader.fieldnames
+                updated_rows = list(reader)
+                
+            self.assertIn("nome_gara", headers)
+            self.assertEqual(updated_rows[0]["nome_gara"], "Gara 2026-06-08")
+            self.assertEqual(updated_rows[1]["nome_gara"], "Gara 2026-06-09")
+            
+            # 4. Check new race with custom track name
+            drivers = [
+                DriverResult(name="Charles Leclerc", scuderia="Ferrari", position=1, num_laps=50, grid_position=1, points=0, num_pit_stops=1, result_status=3, best_lap_time_ms=80000, total_race_time=5000.0, penalties_time=0),
+            ]
+            result = RaceResult(drivers=drivers, fastest_lap_driver="Charles Leclerc", fastest_lap_time_ms=80000, session_type=10, game_year=25, track_name="Monza")
+            scored = calculate_points(result)
+            self.assertEqual(scored[0]["nome_gara"], "Monza")
+            
+        finally:
+            if os.path.exists(temp_csv):
+                os.remove(temp_csv)
+
+    def test_sprint_import_logic(self):
+        # Test parsing a CSV file as a Sprint race.
+        # It should allocate sprint points (8 to 1) and no fastest lap bonus.
+        driver_to_team = {
+            "Angelo": "Red Bull Racing",
+            "Franco": "Ferrari",
+        }
+        
+        # Parse with is_sprint=True
+        result, unresolved = parse_exported_csv(self.TEST_CSV_CONTENT, driver_to_team, is_sprint=True)
+        self.assertEqual(len(unresolved), 0)
+        self.assertIsNotNone(result)
+        self.assertEqual(result.session_type, 11)
+        
+        # Calculate points
+        scored = calculate_points(result)
+        
+        # P1 (Angelo) should get 8 points
+        p1 = next(x for x in scored if x["pilota"] == "Angelo")
+        self.assertEqual(p1["punti_base"], 8)
+        self.assertEqual(p1["bonus_giro_veloce"], 0)
+        self.assertEqual(p1["punti_totali"], 8)
+        
+        # P2 (POMELLO) should get 7 points
+        p2 = next(x for x in scored if x["pilota"] == "POMELLO")
+        self.assertEqual(p2["punti_base"], 7)
+        
+        # P8 (Max Verstappen) should get 1 point
+        p8 = next(x for x in scored if x["pilota"] == "Max Verstappen")
+        self.assertEqual(p8["punti_base"], 1)
+        
+        # P9 (Arvid Lindblad) should get 0 points
+        p9 = next(x for x in scored if x["pilota"] == "Arvid Lindblad")
+        self.assertEqual(p9["punti_base"], 0)
 
 if __name__ == "__main__":
     unittest.main()

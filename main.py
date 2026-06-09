@@ -36,7 +36,7 @@ from telemetry import RESULT_STATUS_NAMES
 from championship import (process_race_result, get_championship_standings,
                          delete_last_race, reset_championship,
                          get_constructors_standings, get_active_csv, set_active_csv,
-                         rename_driver, is_duplicate_race)
+                         rename_driver, is_duplicate_race, get_completed_races)
 from config import set_driver_team, clear_driver_teams, get_custom_driver_to_team, DEFAULT_OFFICIAL_TEAMS, get_driver_to_team
 from import_parser import parse_exported_csv
 
@@ -157,9 +157,13 @@ def build_race_embed(scored: list, result: RaceResult) -> discord.Embed:
       - Giro Veloce
       - Ritirati / DNF / DSQ
     """
+    is_sprint = getattr(result, "session_type", 10) in (11, 14, 15)
+    title = "🏁  RISULTATI SPRINT" if is_sprint else "🏁  RISULTATI GARA"
+    desc = "Classifica finale e punti Sprint" if is_sprint else "Classifica finale e punti campionato"
+    
     embed = discord.Embed(
-        title="🏁  RISULTATI GARA",
-        description="Classifica finale e punti campionato",
+        title=title,
+        description=desc,
         color=0xDC0000,  # Rosso F1
     )
 
@@ -253,6 +257,7 @@ def _status_code(status_text: str) -> int:
 async def classifica_command(interaction: discord.Interaction):
     standings = await asyncio.to_thread(get_championship_standings)
     constructors = await asyncio.to_thread(get_constructors_standings)
+    races = await asyncio.to_thread(get_completed_races)
 
     if not standings:
         await interaction.response.send_message(
@@ -290,6 +295,12 @@ async def classifica_command(interaction: discord.Interaction):
             else: prefix = f"**{i}.**"
             c_lines.append(f"{prefix} {team} — **{points} pt**")
         embed.add_field(name="Costruttori", value="\n".join(c_lines), inline=False)
+
+    if races:
+        races_text = "\n".join(f"• {r}" for r in races)
+        if len(races_text) > 1024:
+            races_text = races_text[:1021] + "..."
+        embed.add_field(name="🏁  Gare Completate", value=races_text, inline=False)
 
     embed.set_footer(text=f"File: {get_active_csv()} • /classifica")
     await interaction.response.send_message(embed=embed)
@@ -630,13 +641,14 @@ async def annulla_gara_command(interaction: discord.Interaction):
 @bot.tree.command(name="importa_risultati", description="Importa i risultati di una gara da un file esportato da F1 25")
 @app_commands.describe(
     file="Il file CSV generato dalla funzione 'esporta risultati sessione'",
-    tipo_gara="Scegli se è una Gara Standard o una Gara Sprint"
+    tipo_gara="Scegli se è una Gara Standard o una Gara Sprint",
+    nome_gara="Nome della gara/pista (es. Australia, Monza)"
 )
 @app_commands.choices(tipo_gara=[
     app_commands.Choice(name="Standard", value="standard"),
     app_commands.Choice(name="Sprint", value="sprint")
 ])
-async def importa_risultati_command(interaction: discord.Interaction, file: discord.Attachment, tipo_gara: app_commands.Choice[str] = None):
+async def importa_risultati_command(interaction: discord.Interaction, file: discord.Attachment, tipo_gara: app_commands.Choice[str] = None, nome_gara: str = None):
     await interaction.response.defer()
 
     # --- Validazione file ---
@@ -678,6 +690,11 @@ async def importa_risultati_command(interaction: discord.Interaction, file: disc
         driver_mapping = await asyncio.to_thread(get_custom_driver_to_team)
         result, unresolved = await asyncio.to_thread(
             parse_exported_csv, content_text, driver_mapping, is_sprint)
+        if result:
+            if nome_gara:
+                result.track_name = nome_gara
+            else:
+                result.track_name = "Sprint Importata" if is_sprint else "Gara Importata"
     except Exception as e:
         await interaction.edit_original_response(
             content=f"❌ Errore durante il parsing del file: {e}")
@@ -741,6 +758,123 @@ async def importa_risultati_command(interaction: discord.Interaction, file: disc
     embed = build_race_embed(scored, result)
     await interaction.edit_original_response(
         content="✅ Risultati importati e salvati con successo!",
+        embed=embed, view=None)
+
+
+# ============================================================================
+# SLASH COMMAND: /importa_sprint
+# ============================================================================
+@bot.tree.command(name="importa_sprint", description="Importa i risultati di una gara Sprint da un file esportato da F1 25")
+@app_commands.describe(
+    file="Il file CSV generato dalla funzione 'esporta risultati sessione'",
+    nome_gara="Nome della gara/pista (es. Cina, Austria)"
+)
+async def importa_sprint_command(interaction: discord.Interaction, file: discord.Attachment, nome_gara: str = None):
+    await interaction.response.defer()
+
+    # --- Validazione file ---
+    if not file.filename.lower().endswith('.csv'):
+        await interaction.edit_original_response(
+            content="❌ Il file deve essere un `.csv` esportato da F1 25 / F1 26.\n"
+                    "Nel gioco: **Esporta risultati sessione** dalla schermata dei risultati.")
+        return
+
+    if file.size > 500_000:  # 500 KB
+        await interaction.edit_original_response(
+            content="❌ Il file è troppo grande. Sei sicuro che sia un file esportato da F1 25 / F1 26?")
+        return
+
+    # --- Lettura file ---
+    try:
+        content_bytes = await file.read()
+        try:
+            content_text = content_bytes.decode('utf-8')
+        except UnicodeDecodeError:
+            content_text = content_bytes.decode('latin-1')
+    except Exception as e:
+        await interaction.edit_original_response(content=f"❌ Errore durante la lettura del file: {e}")
+        return
+
+    # --- Validazione contenuto minima ---
+    if '"Pos."' not in content_text and '"Pilota"' not in content_text:
+        await interaction.edit_original_response(
+            content="❌ Il file non sembra essere un CSV di risultati F1 25 / F1 26.\n"
+                    "Deve contenere le colonne `Pos.`, `Pilota`, `Scuderia`, ecc.")
+        return
+
+    # --- Parsing ---
+    try:
+        driver_mapping = await asyncio.to_thread(get_custom_driver_to_team)
+        result, unresolved = await asyncio.to_thread(
+            parse_exported_csv, content_text, driver_mapping, True) # is_sprint = True
+        if result:
+            if nome_gara:
+                result.track_name = f"{nome_gara} Sprint"
+            else:
+                result.track_name = "Sprint Importata"
+    except Exception as e:
+        await interaction.edit_original_response(
+            content=f"❌ Errore durante il parsing del file: {e}")
+        return
+
+    # --- Gestione "Utente" non risolti ---
+    if unresolved:
+        lines = []
+        for idx, team in unresolved:
+            lines.append(f"• Posizione {idx + 1}, scuderia **{team}**")
+        await interaction.edit_original_response(
+            content="⚠️ Non riesco a capire chi sono questi giocatori:\n"
+                    + "\n".join(lines) +
+                    "\n\nUsa `/imposta_scuderia` per assegnare ogni giocatore "
+                    "alla sua scuderia, poi riprova il comando.")
+        return
+
+    if result is None or not result.drivers:
+        await interaction.edit_original_response(
+            content="❌ Il file è stato letto ma non contiene piloti validi. "
+                    "Controlla che sia un export di una gara completata.")
+        return
+
+    # --- Anteprima e conferma ---
+    preview_lines = []
+    for d in result.drivers[:5]:
+        status = "🏁" if d.result_status == RESULT_FINISHED else "💥 RIT"
+        preview_lines.append(f"P{d.position} — {d.name} [{d.scuderia}] {status}")
+    if len(result.drivers) > 5:
+        preview_lines.append(f"... e altri {len(result.drivers) - 5} piloti")
+
+    # Controlla se è un duplicato
+    is_dup = await asyncio.to_thread(is_duplicate_race, result)
+    dup_warning = ""
+    if is_dup:
+        dup_warning = "\n\n⚠️ **ATTENZIONE: Questa gara sembra IDENTICA all'ultima già salvata!** Se procedi, potresti sdoppiare i punti. (In caso di errore potrai usare `/annulla_gara`)."
+
+    confirm_view = ConfirmView(interaction.user)
+    await interaction.edit_original_response(
+        content=f"📋 **Anteprima importazione Sprint** ({len(result.drivers)} piloti):\n"
+                + "\n".join(preview_lines)
+                + f"\n\n⚡ Giro veloce: **{result.fastest_lap_driver}** (Nessun punto bonus nelle Sprint)"
+                + dup_warning
+                + f"\n\nVuoi salvare questi risultati nel campionato **{get_active_csv()}**?",
+        view=confirm_view)
+    await confirm_view.wait()
+
+    if not confirm_view.confirmed:
+        await interaction.edit_original_response(
+            content="❌ Importazione annullata.", view=None)
+        return
+
+    # --- Salvataggio ---
+    try:
+        scored = await asyncio.to_thread(process_race_result, result)
+    except Exception as e:
+        await interaction.edit_original_response(
+            content=f"❌ Errore durante il salvataggio: {e}", view=None)
+        return
+
+    embed = build_race_embed(scored, result)
+    await interaction.edit_original_response(
+        content="✅ Risultati Sprint importati e salvati con successo!",
         embed=embed, view=None)
 
 
@@ -876,6 +1010,7 @@ async def comandi_command(interaction: discord.Interaction):
         ("`/classifica`", "Mostra la classifica generale del campionato attivo"),
         ("`/telemetria`", "Analisi telemetrica post-gara per un pilota"),
         ("`/importa_risultati`", "Importa i risultati da un file CSV esportato dal gioco"),
+        ("`/importa_sprint`", "Importa i risultati di una gara Sprint da un file CSV"),
         ("`/annulla_gara`", "Cancella l'ultima gara registrata"),
         ("`/forza_salvataggio`", "Forza il salvataggio della telemetria a gara finita"),
         ("`/nuovo_campionato`", "Crea un nuovo campionato da zero"),

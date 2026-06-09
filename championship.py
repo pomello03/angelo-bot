@@ -32,7 +32,7 @@ SPRINT_POINTS = {
 }
 
 CSV_HEADERS = [
-    "data", "pilota", "scuderia", "posizione", "punti_base", "bonus_giro_veloce",
+    "data", "nome_gara", "pilota", "scuderia", "posizione", "punti_base", "bonus_giro_veloce",
     "punti_totali", "giri", "pit_stop", "miglior_giro", "stato",
     "griglia_partenza", "tempo_penalita"
 ]
@@ -73,7 +73,12 @@ def calculate_points(result: RaceResult) -> List[Dict]:
 
         total = base_points + fastest_bonus
 
+        track_name = getattr(result, "track_name", "Sconosciuta")
+        if track_name == "Sconosciuta":
+            track_name = "Sprint Sconosciuta" if is_sprint else "Gara Sconosciuta"
+
         scored_drivers.append({
+            "nome_gara": track_name,
             "pilota": driver.name,
             "scuderia": driver.scuderia,
             "posizione": driver.position,
@@ -100,12 +105,78 @@ def _status_text(status: int) -> str:
 # ============================================================================
 # SALVATAGGIO CSV E LETTURA CLASSIFICHE
 # ============================================================================
+def upgrade_csv_headers(csv_path: str):
+    """
+    Controlla se il file CSV ha i vecchi header (senza 'nome_gara')
+    e lo aggiorna al nuovo formato preservando i dati.
+    """
+    if not os.path.isfile(csv_path):
+        return
+
+    # Leggi la prima riga per controllare gli header
+    with open(csv_path, mode='r', encoding='utf-8') as f:
+        reader = csv.reader(f)
+        try:
+            headers = next(reader)
+        except StopIteration:
+            return # file vuoto
+
+    # Se 'nome_gara' non è negli header, aggiorniamo il file
+    if "nome_gara" not in headers:
+        print(f"[Championship] Upgrade del CSV {csv_path} al nuovo formato con 'nome_gara'...")
+        
+        # Leggi tutte le righe come dizionari (usando i vecchi header)
+        old_headers = [h for h in CSV_HEADERS if h != "nome_gara"]
+        with open(csv_path, mode='r', encoding='utf-8') as f:
+            reader = csv.DictReader(f, fieldnames=old_headers)
+            # Salta la riga dei vecchi header che abbiamo appena letto manualmente
+            next(reader)
+            old_rows = list(reader)
+
+        # Riscrivi il file con i nuovi header
+        with open(csv_path, mode='w', newline='', encoding='utf-8') as f:
+            writer = csv.DictWriter(f, fieldnames=CSV_HEADERS)
+            writer.writeheader()
+            for row in old_rows:
+                if "nome_gara" not in row or not row["nome_gara"]:
+                    date_str = row.get("data", "").split(" ")[0]
+                    row["nome_gara"] = f"Gara {date_str}" if date_str else "Gara Sconosciuta"
+                writer.writerow(row)
+
+
+def get_completed_races(csv_path: str = None) -> List[str]:
+    """
+    Legge il CSV e restituisce la lista ordinata dei nomi delle gare completate.
+    Ogni gara è identificata da un timestamp unico (colonna 'data').
+    """
+    csv_path = csv_path or get_active_csv()
+    if not os.path.isfile(csv_path):
+        return []
+
+    upgrade_csv_headers(csv_path)
+
+    races = []
+    seen_timestamps = set()
+
+    with open(csv_path, mode='r', encoding='utf-8') as f:
+        reader = csv.DictReader(f)
+        for row in reader:
+            timestamp = row.get("data")
+            if timestamp and timestamp not in seen_timestamps:
+                seen_timestamps.add(timestamp)
+                nome_gara = row.get("nome_gara", "Gara Sconosciuta")
+                races.append(nome_gara)
+
+    return races
+
+
 def save_to_csv(scored_drivers: List[Dict], csv_path: str = None):
     """
     Salva i risultati della gara nel file CSV in modalita' append.
     Crea il file con gli header se non esiste.
     """
     csv_path = csv_path or get_active_csv()
+    upgrade_csv_headers(csv_path)
     file_exists = os.path.isfile(csv_path)
     timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
@@ -136,6 +207,7 @@ def get_championship_standings(csv_path: str = None) -> List[Tuple[str, int]]:
     csv_path = csv_path or get_active_csv()
     if not os.path.isfile(csv_path):
         return []
+    upgrade_csv_headers(csv_path)
 
     standings: Dict[str, int] = {}
 
@@ -158,6 +230,7 @@ def get_constructors_standings(csv_path: str = None) -> List[Tuple[str, int]]:
     csv_path = csv_path or get_active_csv()
     if not os.path.isfile(csv_path):
         return []
+    upgrade_csv_headers(csv_path)
 
     standings: Dict[str, int] = {}
     driver_mapping = get_driver_to_team()
@@ -194,6 +267,7 @@ def is_duplicate_race(result: RaceResult, csv_path: str = None) -> bool:
     csv_path = csv_path or get_active_csv()
     if not os.path.isfile(csv_path):
         return False
+    upgrade_csv_headers(csv_path)
 
     with open(csv_path, mode='r', encoding='utf-8') as f:
         reader = csv.DictReader(f)
@@ -244,6 +318,7 @@ def delete_last_race(csv_path: str = None) -> str:
     csv_path = csv_path or get_active_csv()
     if not os.path.isfile(csv_path):
         return "Nessun file campionato trovato."
+    upgrade_csv_headers(csv_path)
 
     with open(csv_path, mode='r', encoding='utf-8') as f:
         reader = csv.DictReader(f)
@@ -305,6 +380,7 @@ def rename_driver(nome_attuale: str, nome_nuovo: str, csv_path: str = None) -> i
     csv_path = csv_path or get_active_csv()
     if not os.path.isfile(csv_path):
         return 0
+    upgrade_csv_headers(csv_path)
 
     rows = []
     modifications = 0

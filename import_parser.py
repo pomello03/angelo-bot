@@ -20,6 +20,7 @@ from config import canonicalize_driver_name
 # Necessario per coerenza con i dati delle gare registrate via telemetria.
 GAME_TEAM_TO_BOT = {
     "mercedes-amg petronas": "Mercedes",
+    "mercedes-amg f1 team": "Mercedes",
     "mercedes": "Mercedes",
     "scuderia ferrari hp": "Ferrari",
     "scuderia ferrari": "Ferrari",
@@ -34,6 +35,7 @@ GAME_TEAM_TO_BOT = {
     "bwt alpine": "Alpine",
     "williams": "Williams",
     "williams racing": "Williams",
+    "atlassian williams f1 team": "Williams",
     "visa cash app racing bulls": "RB",
     "racing bulls": "RB",
     "rb": "RB",
@@ -42,6 +44,8 @@ GAME_TEAM_TO_BOT = {
     "kick sauber": "Kick Sauber",
     "stake f1 team kick sauber": "Kick Sauber",
     "sauber": "Kick Sauber",
+    "audi": "Audi",
+    "cadillac": "Cadillac",
 }
 
 

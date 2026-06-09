@@ -1,5 +1,5 @@
 {
-  "ACTIVE_CHAMPIONSHIP": "F1 26 NEGROTTI.csv",
+  "ACTIVE_CHAMPIONSHIP": "Ufficiale quello vero assoluto punto.csv",
   "TEAM_NAMES": {
     "0": "Mercedes",
     "1": "Ferrari",
@@ -85,8 +85,8 @@
     "110": "Liam Lawson"
   },
   "DRIVER_TO_TEAM": {
-    "POMELLO": "Red Bull Racing",
-    "PREDIERI": "Mercedes",
+    "POMELLO": "Mercedes",
+    "PREDIERI": "Red Bull Racing",
     "Angelo Abrigo": "Ferrari"
   }
 }

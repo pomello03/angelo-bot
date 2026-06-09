@@ -48,6 +48,45 @@ RESULT_STATUS_NAMES = {
     4: "DNF", 5: "DSQ", 6: "Non Classificato", 7: "Ritirato",
 }
 
+TRACK_IDS = {
+    0: "Melbourne",
+    1: "Paul Ricard",
+    2: "Shanghai",
+    3: "Sakhir (Bahrain)",
+    4: "Catalunya",
+    5: "Monaco",
+    6: "Baku",
+    7: "Silverstone",
+    8: "Hungaroring",
+    9: "Spa-Francorchamps",
+    10: "Monza",
+    11: "Singapore",
+    12: "Suzuka",
+    13: "Abu Dhabi",
+    14: "Austin (Texas)",
+    15: "Interlagos (Brasile)",
+    16: "Paul Ricard (Short)",
+    17: "Silverstone (Short)",
+    18: "Texas (Short)",
+    19: "Suzuka (Short)",
+    20: "Hanoi",
+    21: "Zandvoort",
+    22: "Imola",
+    23: "Portimao",
+    24: "Jeddah (Short)",
+    25: "Mugello",
+    26: "Jeddah",
+    27: "Imola",
+    28: "Portimao",
+    29: "Singapore (Short)",
+    30: "Jeddah",
+    31: "Miami",
+    32: "Las Vegas",
+    33: "Losail (Qatar)",
+    34: "Losail",
+    39: "Losail (Qatar)"
+}
+
 from config import get_ai_driver_names, get_team_names, canonicalize_driver_name
 
 # ============================================================================
@@ -77,6 +116,7 @@ class RaceResult:
     fastest_lap_time_ms: int = 0
     session_type: int = 0
     game_year: int = 25
+    track_name: str = "Sconosciuta"
 
 
 
@@ -110,6 +150,7 @@ class TelemetryListener:
         self._session_histories: dict = {}
         self._last_classification_hash = None
         self._current_game_year = 25
+        self._current_track_id = -1
 
     def start(self):
         if self._running:
@@ -202,13 +243,17 @@ class TelemetryListener:
     def _parse_session(self, data: bytes, packet_format: int):
         header_size = 28 if packet_format == 2024 else 29
         offset = header_size + 6
-        if len(data) < offset + 1:
+        if len(data) < offset + 2:
             return
-        session_type = struct.unpack_from('<B', data, offset)[0]
+        session_type, track_id = struct.unpack_from('<Bb', data, offset)
         
         if session_type != self._current_session_type:
             print(f"[Telemetry] Tipo sessione aggiornato: {session_type}")
             self._current_session_type = session_type
+
+        if track_id != self._current_track_id:
+            print(f"[Telemetry] ID Pista aggiornato: {track_id}")
+            self._current_track_id = track_id
 
     # --- PacketParticipantsData (packetId=4) ---
     def _parse_participants(self, data: bytes, packet_format: int):
@@ -345,9 +390,16 @@ class TelemetryListener:
             offset += CLASS_SIZE
 
         drivers.sort(key=lambda d: d.position)
+        
+        track_base = TRACK_IDS.get(self._current_track_id, f"Pista #{self._current_track_id}")
+        if self._current_session_type in (11, 14, 15):
+            track_name = f"{track_base} Sprint"
+        else:
+            track_name = track_base
+
         result = RaceResult(drivers=drivers, fastest_lap_driver=fastest_driver,
                             fastest_lap_time_ms=fastest_ms, session_type=self._current_session_type,
-                            game_year=self._current_game_year)
+                            game_year=self._current_game_year, track_name=track_name)
 
         self._race_already_processed = True
         self._last_classification_hash = payload_hash
