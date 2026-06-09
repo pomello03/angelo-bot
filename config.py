@@ -101,14 +101,15 @@ DEFAULT_OFFICIAL_TEAMS = {
     "Oscar Piastri": "McLaren",
     # Red Bull Racing
     "Max Verstappen": "Red Bull Racing",
-    "Sergio Perez": "Red Bull Racing",
+    "Isack Hadjar": "Red Bull Racing",
+    "Sergio Perez (25)": "Red Bull Racing",
     # Aston Martin
     "Fernando Alonso": "Aston Martin",
     "Lance Stroll": "Aston Martin",
     # Alpine
     "Pierre Gasly": "Alpine",
-    "Jack Doohan": "Alpine",
     "Franco Colapinto": "Alpine",
+    "Jack Doohan": "Alpine",
     # Williams
     "Alexander Albon": "Williams",
     "Carlos Sainz": "Williams",
@@ -116,16 +117,21 @@ DEFAULT_OFFICIAL_TEAMS = {
     # RB
     "Yuki Tsunoda": "RB",
     "Liam Lawson": "RB",
-    "Isack Hadjar": "RB",
+    "Arvid Lindblad": "RB",
     "Daniel Ricciardo": "RB",
     # Haas
     "Esteban Ocon": "Haas",
     "Oliver Bearman": "Haas",
     "Kevin Magnussen": "Haas",
-    # Kick Sauber
-    "Nico Hulkenberg": "Kick Sauber",
-    "Gabriel Bortoleto": "Kick Sauber",
-    "Valtteri Bottas": "Kick Sauber",
+    # Audi (F1 26)
+    "Nico Hulkenberg": "Audi",
+    "Gabriel Bortoleto": "Audi",
+    "Nico Hülkenberg": "Audi",
+    # Cadillac (F1 26)
+    "Valtteri Bottas": "Cadillac",
+    "Sergio Perez": "Cadillac",
+    "Sergio Pérez": "Cadillac",
+    # Kick Sauber (F1 25)
     "Guanyu Zhou": "Kick Sauber"
 }
 
