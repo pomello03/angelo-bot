@@ -292,3 +292,38 @@ def reset_championship(nome: str) -> str:
         return f"🏁 Creato e attivato il nuovo campionato: **{new_csv}**.\nIl campionato precedente ({old_csv}) è stato messo in pausa."
     else:
         return f"✅ Attivato il campionato esistente: **{new_csv}**.\nNessun dato è stato cancellato."
+
+
+# ============================================================================
+# RINOMINA PILOTA
+# ============================================================================
+def rename_driver(nome_attuale: str, nome_nuovo: str, csv_path: str = None) -> int:
+    """
+    Rinomina un pilota in tutto il file CSV del campionato (case-insensitive).
+    Restituisce il numero di righe modificate.
+    """
+    csv_path = csv_path or get_active_csv()
+    if not os.path.isfile(csv_path):
+        return 0
+
+    rows = []
+    modifications = 0
+
+    with open(csv_path, mode='r', encoding='utf-8') as f:
+        reader = csv.DictReader(f)
+        fieldnames = reader.fieldnames
+        for row in reader:
+            pilota = row.get("pilota", "")
+            if pilota.lower() == nome_attuale.lower():
+                row["pilota"] = nome_nuovo
+                modifications += 1
+            rows.append(row)
+
+    if modifications > 0:
+        with open(csv_path, mode='w', newline='', encoding='utf-8') as f:
+            writer = csv.DictWriter(f, fieldnames=fieldnames or CSV_HEADERS)
+            writer.writeheader()
+            writer.writerows(rows)
+
+    return modifications
+

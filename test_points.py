@@ -1,7 +1,7 @@
 import unittest
 import struct
 import io
-from championship import calculate_points
+from championship import calculate_points, rename_driver
 from telemetry import RaceResult, DriverResult, TelemetryListener
 from import_parser import parse_exported_csv
 from config import get_driver_to_team
@@ -197,6 +197,57 @@ class TestAngeloBot(unittest.TestCase):
         self.assertEqual(lap_entry["s2_ms"], 35250)
         self.assertEqual(lap_entry["s3_ms"], 25100)
         self.assertTrue(lap_entry["is_valid"])
+
+    def test_rename_driver(self):
+        import os
+        import csv
+        temp_csv = "temp_test_rename_championship.csv"
+        
+        # Ensure clean state
+        if os.path.exists(temp_csv):
+            os.remove(temp_csv)
+            
+        try:
+            # 1. Test when file does not exist
+            res = rename_driver("Pilota #0", "Angelo", csv_path=temp_csv)
+            self.assertEqual(res, 0)
+            
+            # 2. Setup test data
+            headers = [
+                "data", "pilota", "scuderia", "posizione", "punti_base", "bonus_giro_veloce",
+                "punti_totali", "giri", "pit_stop", "miglior_giro", "stato",
+                "griglia_partenza", "tempo_penalita"
+            ]
+            rows = [
+                {"data": "2026-06-09 18:00:00", "pilota": "Pilota #0", "scuderia": "Ferrari", "posizione": "1", "punti_base": "25", "bonus_giro_veloce": "0", "punti_totali": "25", "giri": "50", "pit_stop": "1", "miglior_giro": "1:30.000", "stato": "Finito", "griglia_partenza": "1", "tempo_penalita": "0"},
+                {"data": "2026-06-09 18:00:00", "pilota": "pilota #0", "scuderia": "Ferrari", "posizione": "2", "punti_base": "18", "bonus_giro_veloce": "0", "punti_totali": "18", "giri": "50", "pit_stop": "1", "miglior_giro": "1:30.500", "stato": "Finito", "griglia_partenza": "2", "tempo_penalita": "0"},
+                {"data": "2026-06-09 18:00:00", "pilota": "Charles Leclerc", "scuderia": "Ferrari", "posizione": "3", "punti_base": "15", "bonus_giro_veloce": "0", "punti_totali": "15", "giri": "50", "pit_stop": "1", "miglior_giro": "1:31.000", "stato": "Finito", "griglia_partenza": "3", "tempo_penalita": "0"},
+            ]
+            with open(temp_csv, mode='w', newline='', encoding='utf-8') as f:
+                writer = csv.DictWriter(f, fieldnames=headers)
+                writer.writeheader()
+                writer.writerows(rows)
+                
+            # 3. Rename with exact match & case-insensitive match
+            mod_count = rename_driver("Pilota #0", "Angelo", csv_path=temp_csv)
+            self.assertEqual(mod_count, 2) # Both "Pilota #0" and "pilota #0" should match case-insensitively
+            
+            # 4. Verify content
+            with open(temp_csv, mode='r', encoding='utf-8') as f:
+                reader = csv.DictReader(f)
+                updated_rows = list(reader)
+                
+            self.assertEqual(updated_rows[0]["pilota"], "Angelo")
+            self.assertEqual(updated_rows[1]["pilota"], "Angelo")
+            self.assertEqual(updated_rows[2]["pilota"], "Charles Leclerc")
+            
+            # 5. Rename non-existent driver
+            mod_count_zero = rename_driver("NonExistent", "Nobody", csv_path=temp_csv)
+            self.assertEqual(mod_count_zero, 0)
+            
+        finally:
+            if os.path.exists(temp_csv):
+                os.remove(temp_csv)
 
 if __name__ == "__main__":
     unittest.main()
