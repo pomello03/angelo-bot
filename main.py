@@ -13,7 +13,15 @@ Configurazione:
   - DISCORD_CHANNEL_ID: ID del canale dove inviare i risultati (dal file .env)
 """
 
+import sys
 import os
+
+# Forza la codifica UTF-8 su Windows per evitare UnicodeEncodeError in console
+if hasattr(sys.stdout, "reconfigure"):
+    sys.stdout.reconfigure(encoding="utf-8")
+if hasattr(sys.stderr, "reconfigure"):
+    sys.stderr.reconfigure(encoding="utf-8")
+
 import glob
 import asyncio
 import re
@@ -75,14 +83,9 @@ async def on_ready():
         if channel and channel.guild:
             guild = channel.guild
             
-            # Copia prima i comandi (che sono definiti globalmente nel codice) nel server
+            # Copia i comandi globali nel server ed esegue la sincronizzazione per la guild
             bot.tree.copy_global_to(guild=guild)
             synced = await bot.tree.sync(guild=guild)
-            print(f"[Discord] {len(synced)} slash commands sincronizzati per il server '{guild.name}'.")
-            
-            # Poi pulisce i comandi globali su Discord per evitare i doppioni
-            bot.tree.clear_commands(guild=None)
-            await bot.tree.sync()
             print(f"[Discord] {len(synced)} slash commands sincronizzati per il server '{guild.name}'.")
         else:
             synced = await bot.tree.sync()
@@ -217,7 +220,8 @@ def build_race_embed(scored: list, result: RaceResult) -> discord.Embed:
         )
 
     # Footer
-    embed.set_footer(text="F1 25 Championship Tracker • Powered by Angelo Bot")
+    game_year = getattr(result, "game_year", 25)
+    embed.set_footer(text=f"F1 {game_year} Championship Tracker • Powered by Angelo Bot")
 
     return embed
 
@@ -328,6 +332,9 @@ async def pulisci_command(interaction: discord.Interaction):
             break
             
     def check(msg):
+        # Elimina solo i messaggi del bot per non cancellare messaggi di utenti reali
+        if msg.author != bot.user:
+            return False
         # Salva solo l'ultimo messaggio Embed del bot
         if last_bot_msg and msg.id == last_bot_msg.id:
             return False
@@ -408,8 +415,8 @@ async def imposta_scuderia_command(interaction: discord.Interaction, pilota: str
             break
             
     if not valid_name:
-        await interaction.response.send_message(f"❌ Pilota `{pilota}` non trovato nel gioco ufficiale o nella classifica attuale. Scegline uno dalla lista.", ephemeral=True)
-        return
+        # Se il pilota non è nei file ufficiali o nel CSV, lo accettiamo comunque per rompere il loop del nuovo campionato
+        valid_name = pilota.strip()
 
     team_val = scuderia.value
     await asyncio.to_thread(set_driver_team, valid_name, team_val)
@@ -623,13 +630,13 @@ async def importa_risultati_command(interaction: discord.Interaction, file: disc
     # --- Validazione file ---
     if not file.filename.lower().endswith('.csv'):
         await interaction.edit_original_response(
-            content="❌ Il file deve essere un `.csv` esportato da F1 25.\n"
+            content="❌ Il file deve essere un `.csv` esportato da F1 25 / F1 26.\n"
                     "Nel gioco: **Esporta risultati sessione** dalla schermata dei risultati.")
         return
 
     if file.size > 500_000:  # 500 KB, un CSV di gara non supera mai i 10 KB
         await interaction.edit_original_response(
-            content="❌ Il file è troppo grande. Sei sicuro che sia un file esportato da F1 25?")
+            content="❌ Il file è troppo grande. Sei sicuro che sia un file esportato da F1 25 / F1 26?")
         return
 
     # --- Lettura file ---
@@ -647,15 +654,18 @@ async def importa_risultati_command(interaction: discord.Interaction, file: disc
     # --- Validazione contenuto minima ---
     if '"Pos."' not in content_text and '"Pilota"' not in content_text:
         await interaction.edit_original_response(
-            content="❌ Il file non sembra essere un CSV di risultati F1 25.\n"
+            content="❌ Il file non sembra essere un CSV di risultati F1 25 / F1 26.\n"
                     "Deve contenere le colonne `Pos.`, `Pilota`, `Scuderia`, ecc.")
         return
 
     # --- Parsing ---
     try:
+        is_sprint = False
+        if tipo_gara and tipo_gara.value == "sprint":
+            is_sprint = True
         driver_mapping = await asyncio.to_thread(get_custom_driver_to_team)
         result, unresolved = await asyncio.to_thread(
-            parse_exported_csv, content_text, driver_mapping)
+            parse_exported_csv, content_text, driver_mapping, is_sprint)
     except Exception as e:
         await interaction.edit_original_response(
             content=f"❌ Errore durante il parsing del file: {e}")
@@ -691,7 +701,7 @@ async def importa_risultati_command(interaction: discord.Interaction, file: disc
     is_dup = await asyncio.to_thread(is_duplicate_race, result)
     dup_warning = ""
     if is_dup:
-        dup_warning = "\n\n⚠️ **ATTENZIONE: Questa gara sembra IDENTICA all'ultima già salvata!** Se procedi, potresti sdoppiare i punti. (In caso di errore potrai usare `/annulla_ultima_gara`)."
+        dup_warning = "\n\n⚠️ **ATTENZIONE: Questa gara sembra IDENTICA all'ultima già salvata!** Se procedi, potresti sdoppiare i punti. (In caso di errore potrai usare `/annulla_gara`)."
 
     confirm_view = ConfirmView(interaction.user)
     await interaction.edit_original_response(
@@ -735,7 +745,7 @@ async def forza_salvataggio_command(interaction: discord.Interaction):
     bot.telemetry_listener._race_already_processed = False
     bot.telemetry_listener._last_classification_hash = None
     
-    await interaction.response.send_message("✅ Segnale inviato! Se il gioco sta ancora trasmettendo la schermata dei risultati, il bot elaborerà e salverà la gara entro 5 secondi.\n*Nota: Non spammare questo comando. Se salvi due volte per errore, usa `/annulla_ultima_gara`.*")
+    await interaction.response.send_message("✅ Segnale inviato! Se il gioco sta ancora trasmettendo la schermata dei risultati, il bot elaborerà e salverà la gara entro 5 secondi.\n*Nota: Non spammare questo comando. Se salvi due volte per errore, usa `/annulla_gara`.*")
 
 
 # ============================================================================

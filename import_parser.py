@@ -67,9 +67,9 @@ def _parse_lap_time_to_ms(time_str: str) -> int:
     time_str = time_str.strip().replace(",", ".")
     if not time_str or time_str in ("N/A", "RIT", ""):
         return 0
-    match = re.match(r'(\d+):(\d+)\.(\d+)', time_str)
+    match = re.match(r'(?:(\d+):)?(\d+)\.(\d+)', time_str)
     if match:
-        minutes = int(match.group(1))
+        minutes = int(match.group(1)) if match.group(1) else 0
         seconds = int(match.group(2))
         millis = int(match.group(3).ljust(3, '0')[:3])
         return minutes * 60000 + seconds * 1000 + millis
@@ -269,13 +269,18 @@ def parse_exported_csv(
 
     drivers.sort(key=lambda d: d.position)
 
+    # Rilevamento automatico dell'anno del gioco basato su piloti e scuderie F1 26
+    game_year = 25
+    for d in drivers:
+        if d.scuderia in ("Audi", "Cadillac") or (d.name in ("Arvid Lindblad", "Isack Hadjar") and d.scuderia == "Red Bull Racing"):
+            game_year = 26
+            break
+
     result = RaceResult(
         drivers=drivers,
         fastest_lap_driver=fastest_driver,
         fastest_lap_time_ms=fastest_ms,
-        session_type=10,  # Gara standard
-    )
-    return result, []
- session_type=10,  # Gara standard
+        session_type=11 if is_sprint else 10,
+        game_year=game_year,
     )
     return result, []
