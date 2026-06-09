@@ -76,30 +76,42 @@ bot = AngeloBot(command_prefix="!", intents=intents)
 @bot.event
 async def on_ready():
     """Chiamato quando il bot si connette a Discord."""
-    # Sincronizza gli slash commands con il server specifico (istantaneo)
-    # La sync globale puo' impiegare fino a un'ora; quella per guild e' immediata.
+    print(f"[Discord] Bot connesso come {bot.user}")
+    print(f"[Discord] Canale risultati: {DISCORD_CHANNEL_ID}")
+
+    # Avvia il listener telemetria in un thread separato immediatamente per non bloccare
+    if not bot.telemetry_listener:
+        bot.telemetry_listener = TelemetryListener(on_race_end=lambda result: handle_race_end(result))
+        bot.telemetry_listener.start()
+
+    # Avvia la sincronizzazione dei comandi in background
+    asyncio.create_task(sync_commands())
+
+
+async def sync_commands():
+    """Sincronizza i comandi in background per evitare blocchi all'avvio."""
     try:
+        # Cerca prima in cache
         channel = bot.get_channel(DISCORD_CHANNEL_ID)
-        if channel and channel.guild:
+        if not channel:
+            try:
+                # Tenta di recuperare via API se non in cache
+                channel = await bot.fetch_channel(DISCORD_CHANNEL_ID)
+            except Exception as e:
+                print(f"[Discord] Impossibile recuperare il canale {DISCORD_CHANNEL_ID} via API: {e}")
+
+        if channel and hasattr(channel, 'guild') and channel.guild:
             guild = channel.guild
-            
-            # Copia i comandi globali nel server ed esegue la sincronizzazione per la guild
+            print(f"[Discord] Sincronizzazione comandi per il server '{guild.name}'...")
             bot.tree.copy_global_to(guild=guild)
             synced = await bot.tree.sync(guild=guild)
             print(f"[Discord] {len(synced)} slash commands sincronizzati per il server '{guild.name}'.")
         else:
+            print(f"[Discord] Canale {DISCORD_CHANNEL_ID} non trovato. Sincronizzazione comandi globale (può richiedere tempo)...")
             synced = await bot.tree.sync()
             print(f"[Discord] {len(synced)} slash commands sincronizzati globalmente.")
     except Exception as e:
         print(f"[Discord] Errore sync comandi: {e}")
-
-    print(f"[Discord] Bot connesso come {bot.user}")
-    print(f"[Discord] Canale risultati: {DISCORD_CHANNEL_ID}")
-
-    # Avvia il listener telemetria in un thread separato
-    if not bot.telemetry_listener:
-        bot.telemetry_listener = TelemetryListener(on_race_end=lambda result: handle_race_end(result))
-        bot.telemetry_listener.start()
 
 
 # ============================================================================
