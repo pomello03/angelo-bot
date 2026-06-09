@@ -161,6 +161,7 @@ def get_constructors_standings(csv_path: str = None) -> List[Tuple[str, int]]:
 
     standings: Dict[str, int] = {}
     driver_mapping = get_driver_to_team()
+    driver_mapping_lower = {k.lower(): v for k, v in driver_mapping.items()}
 
     with open(csv_path, mode='r', encoding='utf-8') as f:
         reader = csv.DictReader(f)
@@ -170,7 +171,7 @@ def get_constructors_standings(csv_path: str = None) -> List[Tuple[str, int]]:
             
             # Retro-compatibilità: se la scuderia manca nel CSV, usa il mapping in config
             if not team or team == "Sconosciuta":
-                team = driver_mapping.get(pilota, "Sconosciuta")
+                team = driver_mapping_lower.get(pilota.lower(), "Sconosciuta")
                 
             if team == "Sconosciuta" or not team: 
                 continue
@@ -291,68 +292,3 @@ def reset_championship(nome: str) -> str:
         return f"🏁 Creato e attivato il nuovo campionato: **{new_csv}**.\nIl campionato precedente ({old_csv}) è stato messo in pausa."
     else:
         return f"✅ Attivato il campionato esistente: **{new_csv}**.\nNessun dato è stato cancellato."
-
-# ============================================================================
-# RINOMINA PILOTA
-# ============================================================================
-def rename_driver(old_name: str, new_name: str, csv_path: str = None) -> int:
-    """
-    Rinomina un pilota nel CSV attivo, utile per correggere bug della telemetria
-    come "Pilota #0". Restituisce il numero di righe modificate.
-    """
-    csv_path = csv_path or get_active_csv()
-    if not os.path.isfile(csv_path):
-        return 0
-
-    with open(csv_path, mode='r', encoding='utf-8') as f:
-        reader = csv.DictReader(f)
-        rows = list(reader)
-
-    modifiche = 0
-    for row in rows:
-        if row.get("pilota") == old_name:
-            row["pilota"] = new_name
-            modifiche += 1
-
-    if modifiche > 0:
-        with open(csv_path, mode='w', newline='', encoding='utf-8') as f:
-            writer = csv.DictWriter(f, fieldnames=CSV_HEADERS)
-            writer.writeheader()
-            writer.writerows(rows)
-
-    return modifiche
-         writer = csv.DictWriter(f, fieldnames=CSV_HEADERS)
-            writer.writeheader()
-        return f"🏁 Creato e attivato il nuovo campionato: **{new_csv}**.\nIl campionato precedente ({old_csv}) è stato messo in pausa."
-    else:
-        return f"✅ Attivato il campionato esistente: **{new_csv}**.\nNessun dato è stato cancellato."
-
-# ============================================================================
-# RINOMINA PILOTA
-# ============================================================================
-def rename_driver(old_name: str, new_name: str, csv_path: str = None) -> int:
-    """
-    Rinomina un pilota nel CSV attivo, utile per correggere bug della telemetria
-    come "Pilota #0". Restituisce il numero di righe modificate.
-    """
-    csv_path = csv_path or get_active_csv()
-    if not os.path.isfile(csv_path):
-        return 0
-
-    with open(csv_path, mode='r', encoding='utf-8') as f:
-        reader = csv.DictReader(f)
-        rows = list(reader)
-
-    modifiche = 0
-    for row in rows:
-        if row.get("pilota") == old_name:
-            row["pilota"] = new_name
-            modifiche += 1
-
-    if modifiche > 0:
-        with open(csv_path, mode='w', newline='', encoding='utf-8') as f:
-            writer = csv.DictWriter(f, fieldnames=CSV_HEADERS)
-            writer.writeheader()
-            writer.writerows(rows)
-
-    return modifiche

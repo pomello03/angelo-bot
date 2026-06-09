@@ -76,6 +76,7 @@ class RaceResult:
     fastest_lap_driver: Optional[str] = None
     fastest_lap_time_ms: int = 0
     session_type: int = 0
+    game_year: int = 25
 
 
 
@@ -108,6 +109,7 @@ class TelemetryListener:
         self._current_session_type = 0
         self._session_histories: dict = {}
         self._last_classification_hash = None
+        self._current_game_year = 25
 
     def start(self):
         if self._running:
@@ -139,12 +141,32 @@ class TelemetryListener:
             except OSError:
                 break
 
-            if len(data) < HEADER_SIZE:
+            if len(data) < 24:
                 continue
 
-            header = struct.unpack_from(HEADER_FORMAT, data, 0)
-            packet_id = header[5]
-            session_uid = header[6]
+            packet_format = struct.unpack_from('<H', data, 0)[0]
+            if packet_format == 2024:
+                header_size = 28
+                header_format = '<HBBBBQfIIBB'
+            else:
+                header_size = 29
+                header_format = '<HBBBBBQfIIBB'
+
+            if len(data) < header_size:
+                continue
+
+            header = struct.unpack_from(header_format, data, 0)
+            if packet_format == 2024:
+                game_year = 24
+                packet_id = header[4]
+                session_uid = header[5]
+            else:
+                game_year = header[1]
+                packet_id = header[5]
+                session_uid = header[6]
+
+            if game_year in (25, 26):
+                self._current_game_year = game_year
 
             self._packet_count += 1
             if self._packet_count % 500 == 0:
@@ -162,44 +184,50 @@ class TelemetryListener:
                 self._session_histories.clear()
                 self._last_classification_hash = None
 
-            if packet_id == PACKET_SESSION:
-                self._parse_session(data)
-            elif packet_id == PACKET_PARTICIPANTS:
-                self._parse_participants(data, header)
-            elif packet_id == PACKET_SESSION_HISTORY:
-                self._parse_session_history(data)
-            elif packet_id == PACKET_FINAL_CLASSIFICATION:
-                self._parse_final_classification(data, header)
+            try:
+                if packet_id == PACKET_SESSION:
+                    self._parse_session(data, packet_format)
+                elif packet_id == PACKET_PARTICIPANTS:
+                    self._parse_participants(data, packet_format)
+                elif packet_id == PACKET_SESSION_HISTORY:
+                    self._parse_session_history(data, packet_format)
+                elif packet_id == PACKET_FINAL_CLASSIFICATION:
+                    self._parse_final_classification(data, packet_format)
+            except Exception as e:
+                print(f"[Telemetry] Errore nell'elaborazione del pacchetto ID {packet_id}: {e}")
 
         self._sock.close()
 
     # --- PacketSessionData (packetId=1) ---
-    def _parse_session(self, data: bytes):
-        # m_sessionType e' all'offset 35 (dopo header + weather/temp/laps/trackLen)
-        if len(data) < 36:
+    def _parse_session(self, data: bytes, packet_format: int):
+        header_size = 28 if packet_format == 2024 else 29
+        offset = header_size + 6
+        if len(data) < offset + 1:
             return
-        session_type = struct.unpack_from('<B', data, 35)[0]
+        session_type = struct.unpack_from('<B', data, offset)[0]
         
         if session_type != self._current_session_type:
             print(f"[Telemetry] Tipo sessione aggiornato: {session_type}")
             self._current_session_type = session_type
 
     # --- PacketParticipantsData (packetId=4) ---
-    def _parse_participants(self, data: bytes, header: tuple):
-        if len(data) < HEADER_SIZE + 1:
+    def _parse_participants(self, data: bytes, packet_format: int):
+        header_size = 28 if packet_format == 2024 else 29
+        if len(data) < header_size + 1:
             return
 
-        num_cars = struct.unpack_from('<B', data, HEADER_SIZE)[0]
-        offset = HEADER_SIZE + 1
+        num_cars = struct.unpack_from('<B', data, header_size)[0]
+        offset = header_size + 1
         
-        # Calcolo dinamico esatto della dimensione: il pacchetto contiene sempre 22 elementi
-        PART_SIZE = (len(data) - offset) // 22
+        # Dimensione fissa dell'elemento ParticipantData per evitare disallineamenti dovuti a padding UDP
+        PART_SIZE = 60 if packet_format == 2024 else 57
 
         if PART_SIZE <= 0:
             return
 
         ai_names = get_ai_driver_names()
         team_names = get_team_names()
+        name_len = 48 if packet_format == 2024 else 32
 
         for i in range(min(num_cars, 22)):
             if offset + PART_SIZE > len(data):
@@ -209,7 +237,7 @@ class TelemetryListener:
             team_id = struct.unpack_from('<B', data, offset + 3)[0]
             
             # Il nome inizia sempre all'offset 7
-            name_bytes = data[offset + 7: offset + 7 + 32]
+            name_bytes = data[offset + 7: offset + 7 + name_len]
             name = name_bytes.split(b'\x00')[0].decode('utf-8', errors='replace').strip()
 
             if ai_controlled == 1:
@@ -224,7 +252,7 @@ class TelemetryListener:
             offset += PART_SIZE
 
     # --- PacketFinalClassificationData (packetId=8) ---
-    def _parse_final_classification(self, data: bytes, header: tuple):
+    def _parse_final_classification(self, data: bytes, packet_format: int):
         # Ignora Prove Libere (1-4), Qualifiche (5-9), Time Trial (13)
         # Ignora Qualifiche Sprint / Shootout (14-18)
         # Accetta Gare (10, 11, 12), Sconosciuti (0) e qualsiasi ID multiplayer custom
@@ -232,46 +260,49 @@ class TelemetryListener:
         
         if self._current_session_type in IGNORED_SESSIONS:
             if not self._race_already_processed:
-                print(f"[Telemetry] ⚠️ Classifica finale ignorata (Session Type = {self._current_session_type} -> Prova/Qualifica)")
+                print(f"[Telemetry] [!] Classifica finale ignorata (Session Type = {self._current_session_type} -> Prova/Qualifica)")
                 self._race_already_processed = True  # per non spammare
             return
             
         if self._race_already_processed:
             return
 
-        if len(data) < HEADER_SIZE + 1:
+        header_size = 28 if packet_format == 2024 else 29
+        if len(data) < header_size + 1:
             return
 
         # Anti-Duplicati: se la classifica è identica a quella appena salvata, ignorala
         # (Risolve il problema del gioco che invia di nuovo i dati dopo un Alt+Tab)
-        payload = data[HEADER_SIZE:]
+        payload = data[header_size:]
         payload_hash = hash(payload)
         if self._last_classification_hash == payload_hash:
             return
 
-        print("\n[Telemetry] 🏁 ELABORAZIONE CLASSIFICA FINALE IN CORSO...")
+        print("\n[Telemetry] [FINE] ELABORAZIONE CLASSIFICA FINALE IN CORSO...")
 
-        num_cars = struct.unpack_from('<B', data, HEADER_SIZE)[0]
-        offset = HEADER_SIZE + 1
-        # Calcolo dinamico esatto della dimensione: il pacchetto contiene sempre 22 elementi
-        CLASS_SIZE = (len(data) - offset) // 22
-        shift = 1 if CLASS_SIZE > 45 else 0
+        num_cars = struct.unpack_from('<B', data, header_size)[0]
+        offset = header_size + 1
+        
+        # Dimensione fissa dell'elemento FinalClassificationData per evitare disallineamenti dovuti a padding UDP
+        if packet_format == 2024:
+            CLASS_SIZE = 45
+            shift = 0
+        else:
+            CLASS_SIZE = 46
+            shift = 1
 
         if CLASS_SIZE <= 0:
             return
 
         # Validazione dei nomi dei piloti (ammorbidita per evitare blocchi su ID 15)
-        garbage_detected = False
         valid_names_count = 0
         for i in range(min(num_cars, 22)):
             name = self._participant_names.get(i, "")
-            if '\ufffd' in name or not name.isprintable():
-                garbage_detected = True
             if len(name.strip()) > 0:
                 valid_names_count += 1
                 
         if valid_names_count == 0:
-            print("[Telemetry] ⏳ Nomi piloti non ancora caricati. Attendo il pacchetto UDP dei partecipanti...")
+            print("[Telemetry] [WAIT] Nomi piloti non ancora caricati. Attendo il pacchetto UDP dei partecipanti...")
             return  # Aspetta che il gioco invii i nomi (ogni 5 secondi) prima di salvare
 
         drivers = []
@@ -295,7 +326,7 @@ class TelemetryListener:
 
             name = self._participant_names.get(i, "")
             if '\ufffd' in name or not name.isprintable() or not name.strip():
-                print(f"[Telemetry] ⚠️ Ignorato pilota {i} (nome non valido o privacy UDP ristretta)")
+                print(f"[Telemetry] [!] Ignorato pilota {i} (nome non valido o privacy UDP ristretta)")
                 continue
 
             team_name = self._participant_teams.get(i, "Sconosciuta")
@@ -315,7 +346,8 @@ class TelemetryListener:
 
         drivers.sort(key=lambda d: d.position)
         result = RaceResult(drivers=drivers, fastest_lap_driver=fastest_driver,
-                            fastest_lap_time_ms=fastest_ms, session_type=self._current_session_type)
+                            fastest_lap_time_ms=fastest_ms, session_type=self._current_session_type,
+                            game_year=self._current_game_year)
 
         self._race_already_processed = True
         self._last_classification_hash = payload_hash
@@ -345,17 +377,18 @@ class TelemetryListener:
             print(f"[Telemetry] Errore nel salvataggio della telemetria JSON: {e}")
 
     # --- PacketSessionHistoryData (packetId=11) ---
-    def _parse_session_history(self, data: bytes):
-        if len(data) < HEADER_SIZE + 7:
+    def _parse_session_history(self, data: bytes, packet_format: int):
+        header_size = 28 if packet_format == 2024 else 29
+        if len(data) < header_size + 7:
             return
 
-        offset = HEADER_SIZE
+        offset = header_size
         car_idx = struct.unpack_from('<B', data, offset)[0]
         num_laps = struct.unpack_from('<B', data, offset + 1)[0]
         
         lap_history_offset = offset + 7
-        # F1 23/24/25 LapHistoryData struct size is typically 11 bytes
-        LAP_DATA_SIZE = 11
+        # F1 23/24/25 LapHistoryData struct size is 14 bytes
+        LAP_DATA_SIZE = 14
 
         history = []
         for lap in range(min(num_laps, 100)):
@@ -364,10 +397,19 @@ class TelemetryListener:
                 break
             
             lap_time = struct.unpack_from('<I', data, curr_offset)[0]
-            s1 = struct.unpack_from('<H', data, curr_offset + 4)[0]
-            s2 = struct.unpack_from('<H', data, curr_offset + 6)[0]
-            s3 = struct.unpack_from('<H', data, curr_offset + 8)[0]
-            valid_flags = struct.unpack_from('<B', data, curr_offset + 10)[0]
+            s1_ms = struct.unpack_from('<H', data, curr_offset + 4)[0]
+            s1_min = struct.unpack_from('<B', data, curr_offset + 6)[0]
+            s1 = s1_ms + s1_min * 60000
+
+            s2_ms = struct.unpack_from('<H', data, curr_offset + 7)[0]
+            s2_min = struct.unpack_from('<B', data, curr_offset + 9)[0]
+            s2 = s2_ms + s2_min * 60000
+
+            s3_ms = struct.unpack_from('<H', data, curr_offset + 10)[0]
+            s3_min = struct.unpack_from('<B', data, curr_offset + 12)[0]
+            s3 = s3_ms + s3_min * 60000
+
+            valid_flags = struct.unpack_from('<B', data, curr_offset + 13)[0]
 
             # Bit 0 = Lap valid
             is_valid = (valid_flags & 0x01) == 0x01
