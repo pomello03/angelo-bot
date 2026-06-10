@@ -1,7 +1,10 @@
 import unittest
 import struct
 import io
-from championship import calculate_points, rename_driver, get_completed_races, upgrade_csv_headers
+from championship import (
+    calculate_points, rename_driver, get_completed_races, upgrade_csv_headers,
+    sanitize_csv_value, desanitize_csv_value, save_to_csv, get_championship_standings,
+)
 from telemetry import RaceResult, DriverResult, TelemetryListener
 from import_parser import parse_exported_csv
 from config import get_driver_to_team
@@ -395,6 +398,64 @@ class TestAngeloBot(unittest.TestCase):
         # P9 (Arvid Lindblad) should get 0 points
         p9 = next(x for x in scored if x["pilota"] == "Arvid Lindblad")
         self.assertEqual(p9["punti_base"], 0)
+
+    def test_csv_sanitization(self):
+        import os
+        import csv as csv_module
+
+        # 1. Unit: i valori che iniziano con caratteri formula vengono prefissati con apice
+        self.assertEqual(sanitize_csv_value("=cmd|'/C calc'!A0"), "'=cmd|'/C calc'!A0")
+        self.assertEqual(sanitize_csv_value("+SUM(A1)"), "'+SUM(A1)")
+        self.assertEqual(sanitize_csv_value("-2+3"), "'-2+3")
+        self.assertEqual(sanitize_csv_value("@evil"), "'@evil")
+        # Valori innocui restano invariati (anche non-stringa)
+        self.assertEqual(sanitize_csv_value("Charles Leclerc"), "Charles Leclerc")
+        self.assertEqual(sanitize_csv_value(25), 25)
+        self.assertEqual(sanitize_csv_value(""), "")
+
+        # 2. Unit: la desanitizzazione è l'inversa esatta
+        for malicious in ("=cmd|'/C calc'!A0", "+SUM(A1)", "-2+3", "@evil"):
+            self.assertEqual(desanitize_csv_value(sanitize_csv_value(malicious)), malicious)
+        # Un apice "legittimo" non seguito da carattere formula non viene rimosso
+        self.assertEqual(desanitize_csv_value("'O'Brien"), "'O'Brien")
+        self.assertEqual(desanitize_csv_value("Normale"), "Normale")
+        self.assertEqual(desanitize_csv_value(""), "")
+
+        # 3. Roundtrip su file: save_to_csv sanitizza su disco, i reader desanitizzano
+        temp_csv = "temp_test_sanitization.csv"
+        if os.path.exists(temp_csv):
+            os.remove(temp_csv)
+        try:
+            malicious_name = "=HYPERLINK(\"http://evil\")"
+            scored = [{
+                "nome_gara": "Monza", "pilota": malicious_name, "scuderia": "Ferrari",
+                "posizione": 1, "punti_base": 25, "bonus_giro_veloce": 0, "punti_totali": 25,
+                "giri": 50, "pit_stop": 1, "miglior_giro": "1:30.000", "stato": "Finito",
+                "griglia_partenza": 1, "tempo_penalita": 0,
+            }]
+            save_to_csv(scored, csv_path=temp_csv)
+
+            # Su disco il valore deve essere neutralizzato con l'apice
+            with open(temp_csv, mode='r', encoding='utf-8') as f:
+                rows = list(csv_module.DictReader(f))
+            self.assertEqual(rows[0]["pilota"], "'" + malicious_name)
+
+            # In lettura il nome torna quello originale, senza apice
+            standings = get_championship_standings(csv_path=temp_csv)
+            self.assertEqual(standings, [(malicious_name, 25)])
+
+            # 4. rename_driver trova il pilota sanitizzato e ri-sanitizza il nuovo nome
+            mod = rename_driver(malicious_name, "+NuovoNome", csv_path=temp_csv)
+            self.assertEqual(mod, 1)
+            with open(temp_csv, mode='r', encoding='utf-8') as f:
+                rows = list(csv_module.DictReader(f))
+            self.assertEqual(rows[0]["pilota"], "'+NuovoNome")
+            standings = get_championship_standings(csv_path=temp_csv)
+            self.assertEqual(standings, [("+NuovoNome", 25)])
+        finally:
+            if os.path.exists(temp_csv):
+                os.remove(temp_csv)
+
 
 if __name__ == "__main__":
     unittest.main()

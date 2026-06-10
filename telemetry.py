@@ -245,7 +245,7 @@ class TelemetryListener:
         offset = header_size + 6
         if len(data) < offset + 2:
             return
-        session_type, track_id = struct.unpack_from('<Bb', data, offset)
+        session_type, track_id = struct.unpack_from('<BB', data, offset)
         
         if session_type != self._current_session_type:
             print(f"[Telemetry] Tipo sessione aggiornato: {session_type}")

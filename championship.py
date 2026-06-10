@@ -19,6 +19,23 @@ from telemetry import RaceResult, DriverResult, RESULT_FINISHED, format_lap_time
 from config import get_active_csv, set_active_csv, get_driver_to_team
 
 # ============================================================================
+# SANITIZZAZIONE CSV (prevenzione CSV Injection)
+# ============================================================================
+def sanitize_csv_value(val):
+    """Prefissa un apice ai valori che iniziano con caratteri formula (=, +, -, @)."""
+    if isinstance(val, str) and val and val[0] in ('=', '+', '-', '@'):
+        return "'" + val
+    return val
+
+
+def desanitize_csv_value(val: str) -> str:
+    """Rimuove l'apice di sanitizzazione per non propagarlo nell'applicazione."""
+    if val and val.startswith("'") and len(val) > 1 and val[1] in ('=', '+', '-', '@'):
+        return val[1:]
+    return val
+
+
+# ============================================================================
 # SISTEMA PUNTI FIA
 # ============================================================================
 FIA_POINTS = {
@@ -164,7 +181,7 @@ def get_completed_races(csv_path: str = None) -> List[str]:
             timestamp = row.get("data")
             if timestamp and timestamp not in seen_timestamps:
                 seen_timestamps.add(timestamp)
-                nome_gara = row.get("nome_gara", "Gara Sconosciuta")
+                nome_gara = desanitize_csv_value(row.get("nome_gara", "Gara Sconosciuta"))
                 races.append(nome_gara)
 
     return races
@@ -189,7 +206,8 @@ def save_to_csv(scored_drivers: List[Dict], csv_path: str = None):
         for driver_data in scored_drivers:
             row = {"data": timestamp}
             row.update(driver_data)
-            writer.writerow(row)
+            sanitized_row = {k: sanitize_csv_value(v) for k, v in row.items()}
+            writer.writerow(sanitized_row)
 
     print(f"[Championship] Risultati salvati in {csv_path} ({len(scored_drivers)} piloti)")
 
@@ -214,7 +232,7 @@ def get_championship_standings(csv_path: str = None) -> List[Tuple[str, int]]:
     with open(csv_path, mode='r', encoding='utf-8') as f:
         reader = csv.DictReader(f)
         for row in reader:
-            name = row.get("pilota", "Sconosciuto")
+            name = desanitize_csv_value(row.get("pilota", "Sconosciuto"))
             pts = int(row.get("punti_totali", 0))
             standings[name] = standings.get(name, 0) + pts
 
@@ -239,8 +257,8 @@ def get_constructors_standings(csv_path: str = None) -> List[Tuple[str, int]]:
     with open(csv_path, mode='r', encoding='utf-8') as f:
         reader = csv.DictReader(f)
         for row in reader:
-            pilota = row.get("pilota", "Sconosciuto")
-            team = row.get("scuderia", "")
+            pilota = desanitize_csv_value(row.get("pilota", "Sconosciuto"))
+            team = desanitize_csv_value(row.get("scuderia", ""))
             
             # Retro-compatibilità: se la scuderia manca nel CSV, usa il mapping in config
             if not team or team == "Sconosciuta":
@@ -288,7 +306,7 @@ def is_duplicate_race(result: RaceResult, csv_path: str = None) -> bool:
         return False
         
     # Verifica l'esatta corrispondenza di piloti e posizioni per evitare falsi positivi
-    csv_results = {(r["pilota"].lower(), str(r["posizione"])) for r in last_race_rows}
+    csv_results = {(desanitize_csv_value(r["pilota"]).lower(), str(r["posizione"])) for r in last_race_rows}
     new_results = {(d.name.lower(), str(d.position)) for d in result.drivers}
 
     return csv_results == new_results
@@ -340,7 +358,7 @@ def delete_last_race(csv_path: str = None) -> str:
         writer.writeheader()
         writer.writerows(remaining_rows)
 
-    return (f"Gara del **{last_timestamp}** rimossa "
+    return (f"Gara del **{desanitize_csv_value(last_timestamp)}** rimossa "
             f"({len(race_rows)} piloti cancellati, "
             f"{len(remaining_rows)} righe rimanenti).")
 
@@ -389,9 +407,9 @@ def rename_driver(nome_attuale: str, nome_nuovo: str, csv_path: str = None) -> i
         reader = csv.DictReader(f)
         fieldnames = reader.fieldnames
         for row in reader:
-            pilota = row.get("pilota", "")
+            pilota = desanitize_csv_value(row.get("pilota", ""))
             if pilota.lower() == nome_attuale.lower():
-                row["pilota"] = nome_nuovo
+                row["pilota"] = sanitize_csv_value(nome_nuovo)
                 modifications += 1
             rows.append(row)
 
